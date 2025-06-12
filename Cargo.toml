@@ -8,7 +8,7 @@ A distributed cache implementation that:
 - Handles connection failures with automatic recovery
 - Ensures data consistency through sequence number tracking
 """
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Databend Authors <opensource@datafuselabs.com>"]
 license = "Apache-2.0"
 publish = false
