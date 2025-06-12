@@ -20,8 +20,7 @@ async-trait = "0.1.88"
 futures = "0.3.24"
 log = "0.4.27"
 thiserror = "1"
-tokio = { version = "1.35.0", features = ["sync"] }
-tonic = { version = "0.12" }
+tokio = { version = "1.35.0", features = ["sync", "time"] }
 
 
 

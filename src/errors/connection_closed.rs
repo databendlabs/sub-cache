@@ -15,8 +15,6 @@
 use std::fmt;
 use std::io;
 
-use tonic::Status;
-
 use crate::errors::either::Either;
 
 /// The connection to the remote data store has been closed.
@@ -34,6 +32,7 @@ use crate::errors::either::Either;
 /// # Usage
 ///
 /// ```rust
+/// # use sub_cache::errors::ConnectionClosed;
 /// let err = ConnectionClosed::new_str("connection reset")
 ///     .context("establishing watch stream")
 ///     .context("initializing cache");
@@ -129,12 +128,6 @@ impl fmt::Display for ConnectionClosed {
 impl From<io::Error> for ConnectionClosed {
     fn from(err: io::Error) -> Self {
         ConnectionClosed::new_io_error(err)
-    }
-}
-
-impl From<Status> for ConnectionClosed {
-    fn from(status: Status) -> Self {
-        ConnectionClosed::new_str(status.to_string())
     }
 }
 
