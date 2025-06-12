@@ -90,6 +90,12 @@ pub use type_config::TypeConfig;
 pub mod errors;
 pub mod event_stream;
 
+pub mod testing {
+    pub mod source;
+    pub mod types;
+    pub mod util;
+}
+
 #[cfg(test)]
 mod tests {
 

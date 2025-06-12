@@ -133,16 +133,66 @@ impl From<io::Error> for ConnectionClosed {
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+
     use super::*;
 
     #[test]
-    fn test_context() {
-        let err = ConnectionClosed::new_str("test")
-            .context("context")
-            .context("context2");
+    fn test_string_error_creation() {
+        let err = ConnectionClosed::new_str("connection failed");
         assert_eq!(
             err.to_string(),
-            "distributed-cache connection closed: test; when: (context; context2)"
+            "distributed-cache connection closed: connection failed"
+        );
+    }
+
+    #[test]
+    fn test_io_error_creation_and_from_trait() {
+        let io_err = io::Error::new(io::ErrorKind::ConnectionRefused, "connection refused");
+        let err: ConnectionClosed = io_err.into();
+        assert_eq!(
+            err.to_string(),
+            "distributed-cache connection closed: connection refused"
+        );
+    }
+
+    #[test]
+    fn test_context_functionality() {
+        let err = ConnectionClosed::new_str("base error")
+            .context("step1")
+            .context("step2")
+            .context("step3");
+        assert_eq!(
+            err.to_string(),
+            "distributed-cache connection closed: base error; when: (step1; step2; step3)"
+        );
+    }
+
+    #[test]
+    fn test_context_with_io_error() {
+        let io_err = io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected EOF");
+        let err = ConnectionClosed::new_io_error(io_err)
+            .context("reading stream")
+            .context("processing events");
+        assert_eq!(
+            err.to_string(),
+            "distributed-cache connection closed: unexpected EOF; when: (reading stream; processing events)"
+        );
+    }
+
+    #[test]
+    fn test_edge_cases() {
+        // Empty string
+        let err1 = ConnectionClosed::new_str("");
+        assert_eq!(err1.to_string(), "distributed-cache connection closed: ");
+
+        // Special characters in context
+        let err2 = ConnectionClosed::new_str("error")
+            .context("step with; semicolon")
+            .context("step with ) parenthesis");
+        assert_eq!(
+            err2.to_string(),
+            "distributed-cache connection closed: error; when: (step with; semicolon; step with ) parenthesis)"
         );
     }
 }

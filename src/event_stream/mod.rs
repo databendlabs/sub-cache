@@ -14,6 +14,7 @@
 
 mod change;
 mod event;
+#[allow(clippy::module_inception)]
 mod event_stream;
 
 pub use change::Change;

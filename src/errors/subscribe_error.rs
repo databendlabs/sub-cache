@@ -35,3 +35,46 @@ impl SubscribeError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_context_functionality() {
+        // Test context with Connection variant (also tests From trait)
+        let conn_err = ConnectionClosed::new_str("timeout");
+        let subscribe_err: SubscribeError = conn_err.into();
+        let with_context = subscribe_err.context("during subscription");
+
+        let error_string = with_context.to_string();
+        assert!(error_string.contains("timeout"));
+        assert!(error_string.contains("during subscription"));
+
+        // Test context with Unsupported variant (also tests From trait)
+        let unsupported_err = Unsupported::new("version mismatch");
+        let subscribe_err: SubscribeError = unsupported_err.into();
+        let with_context = subscribe_err.context("initializing client");
+
+        let error_string = with_context.to_string();
+        assert!(error_string.contains("version mismatch"));
+        assert!(error_string.contains("initializing client"));
+    }
+
+    #[test]
+    fn test_display_formatting() {
+        // Test Connection variant display
+        let conn_err = ConnectionClosed::new_str("connection lost");
+        let subscribe_err = SubscribeError::Connection(conn_err);
+        let display_string = subscribe_err.to_string();
+        assert!(display_string.contains("Subscribe encounter Connection error"));
+        assert!(display_string.contains("connection lost"));
+
+        // Test Unsupported variant display
+        let unsupported_err = Unsupported::new("not implemented");
+        let subscribe_err = SubscribeError::Unsupported(unsupported_err);
+        let display_string = subscribe_err.to_string();
+        assert!(display_string.contains("Subscribe is Unsupported"));
+        assert!(display_string.contains("not implemented"));
+    }
+}

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::fmt;
+use std::future::Future;
 
 use crate::errors::SubscribeError;
 use crate::event_stream::EventStream;
@@ -41,8 +42,7 @@ where
     fn spawn<F>(future: F, name: impl ToString)
     where
         F: Future + Send + 'static,
-        F::Output: Send + 'static,
-    ;
+        F::Output: Send + 'static;
 }
 
 #[async_trait::async_trait]

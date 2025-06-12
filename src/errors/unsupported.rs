@@ -58,11 +58,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_unsupported() {
+    fn test_basic_functionality() {
         let error = Unsupported::new("test");
         assert_eq!(error.to_string(), "Unsupported: test");
 
         let error = error.context("test").context("test2");
         assert_eq!(error.to_string(), "Unsupported: test; when: (test, test2)");
+    }
+
+    #[test]
+    fn test_clone_and_debug() {
+        let error = Unsupported::new("clone test").context("during operation");
+        let cloned = error.clone();
+
+        assert_eq!(error.to_string(), cloned.to_string());
+
+        let debug_output = format!("{:?}", error);
+        assert!(debug_output.contains("clone test"));
+        assert!(debug_output.contains("during operation"));
+    }
+
+    #[test]
+    fn test_edge_cases() {
+        // Empty string
+        let error = Unsupported::new("");
+        assert_eq!(error.to_string(), "Unsupported: ");
+
+        // No context
+        let error = Unsupported::new("no context");
+        assert_eq!(error.to_string(), "Unsupported: no context");
+
+        // Special characters in context
+        let error = Unsupported::new("error")
+            .context("step with, comma")
+            .context("step with; semicolon");
+        assert_eq!(
+            error.to_string(),
+            "Unsupported: error; when: (step with, comma, step with; semicolon)"
+        );
     }
 }

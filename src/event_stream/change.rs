@@ -31,3 +31,36 @@ impl<V> Change<V> {
         (self.key, self.before, self.after)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_functionality() {
+        // Test construction and unpack
+        let change = Change::new("test_key", Some("old"), Some("new"));
+        let (key, before, after) = change.unpack();
+        assert_eq!(key, "test_key");
+        assert_eq!(before, Some("old"));
+        assert_eq!(after, Some("new"));
+
+        // Test different change scenarios
+        let insert = Change::new("key1", None, Some(42));
+        assert_eq!(insert.before, None);
+        assert_eq!(insert.after, Some(42));
+
+        let delete = Change::new("key2", Some("value"), None);
+        assert_eq!(delete.before, Some("value"));
+        assert_eq!(delete.after, None);
+    }
+
+    #[test]
+    fn test_derived_traits() {
+        let change1 = Change::new("key", Some(1), Some(2));
+        let change2 = change1.clone();
+
+        assert_eq!(change1, change2);
+        assert_ne!(change1, Change::new("different", Some(1), Some(2)));
+    }
+}

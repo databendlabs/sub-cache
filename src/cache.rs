@@ -12,19 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::fmt;
+use std::sync::atomic;
+use std::sync::Arc;
+
 use futures::FutureExt;
 use log::debug;
-use std::fmt;
-use std::sync::Arc;
-use std::sync::atomic;
+use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::sync::MutexGuard;
-use tokio::sync::oneshot;
 
-use crate::TypeConfig;
 use crate::cache_data::CacheData;
 use crate::errors::Unsupported;
 use crate::event_watcher::EventWatcher;
+use crate::TypeConfig;
 
 /// Cache implemented on top of the distributed remote data store.
 ///
@@ -87,8 +88,7 @@ pub struct Cache<C: TypeConfig> {
 }
 
 impl<C> fmt::Display for Cache<C>
-where
-    C: TypeConfig,
+where C: TypeConfig
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
@@ -100,8 +100,7 @@ where
 }
 
 impl<C> Cache<C>
-where
-    C: TypeConfig,
+where C: TypeConfig
 {
     /// Create a new cache.
     ///
