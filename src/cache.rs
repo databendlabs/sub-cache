@@ -19,8 +19,9 @@ use std::sync::Arc;
 use futures::FutureExt;
 use log::debug;
 use tokio::sync::oneshot;
-use tokio::sync::Mutex;
-use tokio::sync::MutexGuard;
+use tokio::sync::Notify;
+use tokio::sync::RwLock;
+use tokio::sync::RwLockWriteGuard;
 
 use crate::cache_data::CacheData;
 use crate::errors::Unsupported;
@@ -43,8 +44,9 @@ use crate::TypeConfig;
 ///
 /// The cache employs a two-level concurrency control mechanism:
 ///
-/// 1. **Internal Lock (Mutex)**: Protects concurrent access between user operations and the
-///    background cache updater. This lock is held briefly during each operation.
+/// 1. **Internal Lock (RwLock)**: Protects concurrent access between user operations and the
+///    background cache updater. Readers share it; the updater holds it exclusively and briefly
+///    for each change, and for the whole reset-and-refetch during (re)initialization.
 ///
 /// 2. **External Lock (Method Design)**: Public methods require `&mut self` even for read-only
 ///    operations. This prevents concurrent access to the cache instance from multiple call sites.
@@ -78,7 +80,10 @@ pub struct Cache<C: TypeConfig> {
     #[allow(dead_code)]
     watcher_cancel_tx: oneshot::Sender<()>,
 
-    data: Arc<Mutex<Result<CacheData<C>, Unsupported>>>,
+    data: Arc<RwLock<Result<CacheData<C>, Unsupported>>>,
+
+    /// Wakes the background watcher to drop the current stream and re-fetch everything.
+    resync: Arc<Notify>,
 
     /// A process-wide unique identifier for the cache. Used for debugging purposes.
     uniq: u64,
@@ -128,7 +133,8 @@ where C: TypeConfig
         let mut cache = Cache {
             prefix,
             watcher_cancel_tx: cancel_tx,
-            data: Arc::new(Mutex::new(Err(Unsupported::new("Cache not initialized")))),
+            data: Arc::new(RwLock::new(Err(Unsupported::new("Cache not initialized")))),
+            resync: Arc::new(Notify::new()),
             uniq,
             name: name.to_string(),
         };
@@ -172,8 +178,19 @@ where C: TypeConfig
     }
 
     /// Get the internal cache data.
-    pub async fn cache_data(&mut self) -> MutexGuard<'_, Result<CacheData<C>, Unsupported>> {
-        self.data.lock().await
+    pub async fn cache_data(&mut self) -> RwLockWriteGuard<'_, Result<CacheData<C>, Unsupported>> {
+        self.data.write().await
+    }
+
+    /// Return a cloneable read-only handle that can be shared by concurrent readers.
+    ///
+    /// The handle does not keep the cache alive: once the [`Cache`] is dropped the watcher stops
+    /// and the handle keeps returning the last state it saw.
+    pub fn reader(&self) -> CacheReader<C> {
+        CacheReader {
+            data: self.data.clone(),
+            resync: self.resync.clone(),
+        }
     }
 
     /// Access the cache data in read-only mode.
@@ -181,7 +198,7 @@ where C: TypeConfig
         &mut self,
         f: impl FnOnce(&CacheData<C>) -> T,
     ) -> Result<T, Unsupported> {
-        let guard = self.data.lock().await;
+        let guard = self.data.read().await;
 
         let g = guard.as_ref().map_err(|e| e.clone())?;
 
@@ -201,6 +218,7 @@ where C: TypeConfig
             right,
             source,
             data: self.data.clone(),
+            resync: self.resync.clone(),
             name: watcher_name.to_string(),
         };
 
@@ -226,5 +244,49 @@ where C: TypeConfig
         let right = self.prefix.clone() + "0";
 
         (left, right)
+    }
+}
+
+/// A cloneable, read-only view of a [`Cache`] for concurrent readers.
+///
+/// Reads never wait: while the watcher holds the data exclusively (initial fetch, reconnect, or
+/// applying a change) they return `None`, so a caller can fall back to the remote store instead of
+/// queueing behind it.
+pub struct CacheReader<C: TypeConfig> {
+    data: Arc<RwLock<Result<CacheData<C>, Unsupported>>>,
+    resync: Arc<Notify>,
+}
+
+impl<C: TypeConfig> Clone for CacheReader<C> {
+    fn clone(&self) -> Self {
+        CacheReader {
+            data: self.data.clone(),
+            resync: self.resync.clone(),
+        }
+    }
+}
+
+impl<C> CacheReader<C>
+where C: TypeConfig
+{
+    /// Run `f` on the cache data if it is readable right now.
+    ///
+    /// Returns `None` if the watcher currently holds the data exclusively, and `Some(Err(_))` if
+    /// the cache is not initialized or the remote store does not support subscribing.
+    pub fn try_access_now<T>(
+        &self,
+        f: impl FnOnce(&CacheData<C>) -> T,
+    ) -> Option<Result<T, Unsupported>> {
+        let guard = self.data.try_read().ok()?;
+        Some(guard.as_ref().map(f).map_err(|e| e.clone()))
+    }
+
+    /// Ask the watcher to drop the current stream, reset the data and re-fetch everything.
+    ///
+    /// Used when the caller detects that the cache stopped following the remote store, e.g. a
+    /// half-open connection that never reports an error. Readers get `None` until the re-fetch
+    /// completes.
+    pub fn request_resync(&self) {
+        self.resync.notify_one();
     }
 }

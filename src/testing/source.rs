@@ -142,6 +142,24 @@ impl TestSource {
         state.subscriptions.clear();
     }
 
+    /// Change a key without notifying any subscriber.
+    ///
+    /// Simulates a stream that silently stopped delivering events, such as a half-open
+    /// connection: the source moves on while the cache keeps its old view.
+    pub async fn set_silently(&self, key: &str, value: Option<&str>) {
+        let mut state = self.state.lock().await;
+        state.seq_counter += 1;
+        let new_seq = state.seq_counter;
+        match value {
+            Some(v) => {
+                state.data.insert(key.to_string(), Val::new(new_seq, v));
+            }
+            None => {
+                state.data.remove(key);
+            }
+        }
+    }
+
     #[cfg(test)]
     pub async fn insert_for_test(&self, key: impl ToString, val: Val) {
         let mut state = self.state.lock().await;

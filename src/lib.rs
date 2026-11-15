@@ -84,6 +84,8 @@ mod event_watcher;
 mod type_config;
 
 pub use cache::Cache;
+pub use cache::CacheReader;
+pub use cache_data::CacheData;
 pub use type_config::Source;
 pub use type_config::TypeConfig;
 
