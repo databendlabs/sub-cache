@@ -70,7 +70,8 @@ where C: TypeConfig
     /// # Error Handling
     ///
     /// - Connection failures are automatically retried with exponential backoff
-    /// - On error, the cache is reset and re-fetched to ensure consistency
+    /// - On error, all data is re-fetched; the cache data is replaced only by a complete initial
+    ///   flush, so a flush that fails part way is never served
     /// - The watcher continues running until explicitly canceled
     pub(crate) async fn main(
         mut self,
@@ -93,19 +94,16 @@ where C: TypeConfig
 
             // 1. Retry until a successful connection is established and cache is initialized.
             let strm = {
-                // Hold the lock until the cache is fully initialized.
+                // Hold the lock for the whole attempt, so that readers wait for its data.
                 let mut cache_data = self.data.write().await;
 
-                // The data lock is acquired and will be kept until the cache is fully initialized.
+                // The data lock is acquired and will be kept until this attempt ends.
                 // At this point, we notify the caller that initialization has started by consuming
                 // the `started` sender. This signals to the receiving end that it's now safe to
                 // acquire the data lock, as we're about to populate the cache with initial data.
                 started.take();
 
                 let strm_res = self.retry_new_stream().await;
-
-                // Everytime when establishing a cache, the old data must be cleared and receive a new one.
-                *cache_data = Ok(Default::default());
 
                 let mut strm = match strm_res {
                     Ok(strm) => {
@@ -130,14 +128,20 @@ where C: TypeConfig
                 };
 
                 let init_res = {
-                    // Safe unwrap: before entering this method, the cache data is ensured to be Ok.
-                    let d = cache_data.as_mut().unwrap();
-                    self.initialize_cache(d, &mut strm).await
+                    // Fetch the initial flush aside, and replace the cache data only with a
+                    // complete one. A flush that fails part way is dropped: the lock is released
+                    // before the retry, and the readers then get the data from before this
+                    // attempt, a complete copy or an error, never a part of the flush.
+                    let mut fresh = CacheData::default();
+                    self.initialize_cache(&mut fresh, &mut strm)
+                        .await
+                        .map(|_| fresh)
                 };
 
                 match init_res {
-                    Ok(_) => {
+                    Ok(fresh) => {
                         info!("{}: cache initialized successfully", self.name);
+                        *cache_data = Ok(fresh);
                         strm
                     }
                     Err(conn_err) => {
@@ -160,7 +164,7 @@ where C: TypeConfig
                 }
                 Err(e) => {
                     error!(
-                        "{} watcher loop exited with error: {}; reset cache and re-fetch all data to re-establish",
+                        "{} watcher loop exited with error: {}; re-fetch all data to re-establish",
                         self.name, e
                     );
                     // continue
