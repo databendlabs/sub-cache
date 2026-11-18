@@ -52,21 +52,21 @@ let value = cache.try_get("key").await?;
 
 // List all entries under a directory
 let entries = cache.try_list_dir("dir").await?;
+
+// Read without waiting: `None` while the cache initializes, reconnects or applies a change
+if let Some(value) = cache.try_get_now("key") {
+    let value = value?;
+}
 ```
 
 ## Concurrency Control
 
-The cache employs a two-level concurrency control mechanism:
+The data is behind a read-write lock. Readers share it; the background watcher holds it exclusively, briefly to apply each change, and for the whole reset-and-refetch while it initializes or reconnects.
 
-1. **Internal Lock (Mutex)**: Protects concurrent access between user operations and the background cache updater. This lock is held briefly during each operation.
+Every read takes `&self`, so a cache is shared by reference or `Arc` without an outer lock:
 
-2. **External Lock (Method Design)**: Public methods require `&mut self` even for read-only operations. This prevents concurrent access to the cache instance from multiple call sites. External synchronization should be implemented by the caller if needed.
-
-This design intentionally separates concerns:
-- The internal lock handles short-term, fine-grained synchronization with the updater
-- The external lock requirement (`&mut self`) enables longer-duration access patterns without blocking the background updater unnecessarily
-
-Note that despite requiring `&mut self`, all operations are logically read-only with respect to the cache's public API.
+- `try_get`, `try_list_dir`, `try_last_seq` and `try_access` wait while the watcher holds the data, e.g. until the cache is initialized.
+- `try_get_now`, `try_list_dir_now` and `try_access_now` never wait: they return `None` while the watcher holds the data, and the caller reads the remote data store instead. They are not futures, so they answer whether or not the task's tokio coop budget is spent.
 
 ## Initialization Process
 

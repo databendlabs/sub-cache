@@ -93,7 +93,7 @@ async fn test_unsupported_subscribe() {
 
     // 2. Create cache with the unsupported source
     // The cache creation should complete, but the background watcher should fail
-    let mut cache = Cache::<UnsupportedTestConfig>::new(
+    let cache = Cache::<UnsupportedTestConfig>::new(
         unsupported_source,
         "unsupported_test",
         "unsupported-test",
@@ -200,6 +200,12 @@ async fn test_unsupported_subscribe() {
         );
     }
 
+    // 7. The reads that do not wait return the error too, not `None`.
+    let now = cache.try_access_now(|data| data.last_seq);
+    assert!(matches!(now, Some(Err(_))), "try_access_now: {now:?}");
+    let now = cache.try_get_now("unsupported_test/key");
+    assert!(matches!(now, Some(Err(_))), "try_get_now: {now:?}");
+
     println!("Unsupported subscription test completed successfully!");
     println!("Cache properly entered degraded state and consistently returns Unsupported errors");
 }
@@ -216,7 +222,7 @@ async fn test_unsupported_subscribe_different_errors() {
 
     for (i, error_message) in test_cases.iter().enumerate() {
         let unsupported_source = UnsupportedSource::new(error_message);
-        let mut cache = Cache::<UnsupportedTestConfig>::new(
+        let cache = Cache::<UnsupportedTestConfig>::new(
             unsupported_source,
             &format!("unsupported_test_{i}"),
             &format!("unsupported-test-{i}"),

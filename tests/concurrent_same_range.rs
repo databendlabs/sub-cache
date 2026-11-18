@@ -252,49 +252,40 @@ async fn test_concurrent_same_range_watchers() -> Result<(), Box<dyn std::error:
     });
 
     // Concurrent reads from all caches while updates are happening
-    let read_task_a = tokio::spawn({
-        let mut cache_a = cache_a;
-        async move {
-            for _ in 0..CONFIG.read_task_iterations {
-                let _ = cache_a.try_list_dir("data").await;
-                let _ = cache_a.try_get("data/item1").await;
-                sleep(Duration::from_millis(CONFIG.read_task_delays_ms[0])).await;
-            }
-            cache_a
+    let read_task_a = tokio::spawn(async move {
+        for _ in 0..CONFIG.read_task_iterations {
+            let _ = cache_a.try_list_dir("data").await;
+            let _ = cache_a.try_get("data/item1").await;
+            sleep(Duration::from_millis(CONFIG.read_task_delays_ms[0])).await;
         }
+        cache_a
     });
 
-    let read_task_b = tokio::spawn({
-        let mut cache_b = cache_b;
-        async move {
-            for _ in 0..CONFIG.read_task_iterations {
-                let _ = cache_b.try_list_dir("data").await;
-                let _ = cache_b.try_get("data/item2").await;
-                sleep(Duration::from_millis(CONFIG.read_task_delays_ms[1])).await;
-            }
-            cache_b
+    let read_task_b = tokio::spawn(async move {
+        for _ in 0..CONFIG.read_task_iterations {
+            let _ = cache_b.try_list_dir("data").await;
+            let _ = cache_b.try_get("data/item2").await;
+            sleep(Duration::from_millis(CONFIG.read_task_delays_ms[1])).await;
         }
+        cache_b
     });
 
-    let read_task_c = tokio::spawn({
-        let mut cache_c = cache_c;
-        async move {
-            for _ in 0..CONFIG.read_task_iterations {
-                let _ = cache_c.try_list_dir("data").await;
-                let _ = cache_c.try_get("data/item3").await;
-                sleep(Duration::from_millis(CONFIG.read_task_delays_ms[2])).await;
-            }
-            cache_c
+    let read_task_c = tokio::spawn(async move {
+        for _ in 0..CONFIG.read_task_iterations {
+            let _ = cache_c.try_list_dir("data").await;
+            let _ = cache_c.try_get("data/item3").await;
+            sleep(Duration::from_millis(CONFIG.read_task_delays_ms[2])).await;
         }
+        cache_c
     });
 
     // Wait for all tasks to complete
     let (_, cache_a, cache_b, cache_c) =
         tokio::join!(rapid_updates, read_task_a, read_task_b, read_task_c);
 
-    let mut cache_a = cache_a?;
-    let mut cache_b = cache_b?;
-    let mut cache_c = cache_c?;
+    let cache_a = cache_a?;
+    let cache_b = cache_b?;
+    let cache_c = cache_c?;
 
     // Final synchronization wait
     sleep(Duration::from_millis(CONFIG.final_sync_wait_ms)).await;

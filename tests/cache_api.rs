@@ -324,7 +324,7 @@ async fn test_cache_dir_is_used_as_given() {
         entries.into_iter().map(|(k, _)| k).collect()
     }
 
-    let mut cache = Cache::<TestConfig>::new(source.clone(), "dirs", "dirs").await;
+    let cache = Cache::<TestConfig>::new(source.clone(), "dirs", "dirs").await;
     sleep(Duration::from_millis(100)).await;
     assert_eq!(keys(cache.try_list_dir("dirs").await.unwrap()), vec![
         "dirs///c", "dirs//b", "dirs/a"
@@ -337,7 +337,7 @@ async fn test_cache_dir_is_used_as_given() {
     ]);
 
     // A cache of the empty-named directory holds its keys only.
-    let mut empty_named = Cache::<TestConfig>::new(source.clone(), "dirs/", "dirs-empty").await;
+    let empty_named = Cache::<TestConfig>::new(source.clone(), "dirs/", "dirs-empty").await;
     sleep(Duration::from_millis(100)).await;
     assert_eq!(empty_named.try_get("dirs/a").await.unwrap(), None);
     assert_eq!(
