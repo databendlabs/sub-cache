@@ -37,6 +37,9 @@
 #### `unsupported_subscribe.rs` - 不支持订阅测试
 验证数据源不支持订阅时的优雅降级。返回 `SubscribeError::Unsupported` 错误。
 
+#### `drop_cache.rs` - 丢弃缓存测试
+验证丢弃 `Cache` 后其 watcher 随即退出并释放 `Source`，包括 watcher 仍在建立缓存时：数据源不可达、不支持订阅，或初始数据（initial flush）未完成。
+
 ### 4. 事件处理与一致性测试
 
 #### `event_ordering.rs` - 事件排序和幂等性测试

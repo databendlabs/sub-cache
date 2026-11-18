@@ -65,7 +65,8 @@ where C: TypeConfig
     ///
     /// - `started` - An optional oneshot channel sender that is consumed when the cache initialization
     ///   begins. This signals that it's safe for users to acquire the cache data lock.
-    /// - `cancel` - A future that, when completed, will terminate the subscription loop.
+    /// - `cancel` - A future that, when completed, stops the watcher, whatever it waits for: the
+    ///   delay before a retry, a subscription, the initial flush, or a change.
     ///
     /// # Error Handling
     ///
@@ -81,6 +82,9 @@ where C: TypeConfig
         // sleep time and reason
         let mut sleep = None::<(Duration, String)>;
 
+        // Race every wait below against `c`, except for the data lock, so that dropping the `Cache`
+        // stops the watcher also while it (re)establishes the cache. Readers hold the data lock
+        // only through a `&Cache`, so it is free once the `Cache` is dropped.
         let mut c = std::pin::pin!(cancel);
 
         loop {
@@ -89,7 +93,13 @@ where C: TypeConfig
                     "{}: retry establish cache watcher in {:?} because {}",
                     self.name, sleep_time, reason
                 );
-                tokio::time::sleep(sleep_time).await;
+                futures::select! {
+                    _ = c.as_mut().fuse() => {
+                        info!("{}: canceled while waiting to retry", self.name);
+                        return;
+                    }
+                    _ = tokio::time::sleep(sleep_time).fuse() => {}
+                }
             }
 
             // 1. Retry until a successful connection is established and cache is initialized.
@@ -103,7 +113,13 @@ where C: TypeConfig
                 // acquire the data lock, as we're about to populate the cache with initial data.
                 started.take();
 
-                let strm_res = self.retry_new_stream().await;
+                let strm_res = futures::select! {
+                    _ = c.as_mut().fuse() => {
+                        info!("{}: canceled while establishing the watch stream", self.name);
+                        return;
+                    }
+                    strm_res = self.retry_new_stream().fuse() => strm_res,
+                };
 
                 let mut strm = match strm_res {
                     Ok(strm) => {
@@ -133,9 +149,14 @@ where C: TypeConfig
                     // before the retry, and the readers then get the data from before this
                     // attempt, a complete copy or an error, never a part of the flush.
                     let mut fresh = CacheData::default();
-                    self.initialize_cache(&mut fresh, &mut strm)
-                        .await
-                        .map(|_| fresh)
+                    let init_res = futures::select! {
+                        _ = c.as_mut().fuse() => {
+                            info!("{}: canceled while initializing the cache", self.name);
+                            return;
+                        }
+                        init_res = self.initialize_cache(&mut fresh, &mut strm).fuse() => init_res,
+                    };
+                    init_res.map(|_| fresh)
                 };
 
                 match init_res {
