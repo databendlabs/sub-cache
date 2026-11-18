@@ -296,33 +296,27 @@ async fn test_multi_watcher_concurrent() {
         }
     });
 
-    let rapid_reads_a = tokio::spawn({
-        let mut cache_a = cache_a;
-        async move {
-            for _ in 0..10 {
-                let _ = cache_a.try_get("app/user/user1").await;
-                let _ = cache_a.try_list_dir("app/user").await;
-                sleep(Duration::from_millis(8)).await;
-            }
-            cache_a
+    let rapid_reads_a = tokio::spawn(async move {
+        for _ in 0..10 {
+            let _ = cache_a.try_get("app/user/user1").await;
+            let _ = cache_a.try_list_dir("app/user").await;
+            sleep(Duration::from_millis(8)).await;
         }
+        cache_a
     });
 
-    let rapid_reads_b = tokio::spawn({
-        let mut cache_b = cache_b;
-        async move {
-            for _ in 0..10 {
-                let _ = cache_b.try_get("app/config/setting1").await;
-                let _ = cache_b.try_list_dir("app").await;
-                sleep(Duration::from_millis(6)).await;
-            }
-            cache_b
+    let rapid_reads_b = tokio::spawn(async move {
+        for _ in 0..10 {
+            let _ = cache_b.try_get("app/config/setting1").await;
+            let _ = cache_b.try_list_dir("app").await;
+            sleep(Duration::from_millis(6)).await;
         }
+        cache_b
     });
 
     let (_, cache_a, cache_b) = tokio::join!(rapid_writes, rapid_reads_a, rapid_reads_b);
-    let mut cache_a = cache_a.unwrap();
-    let mut cache_b = cache_b.unwrap();
+    let cache_a = cache_a.unwrap();
+    let cache_b = cache_b.unwrap();
 
     // Wait for final synchronization
     sleep(Duration::from_millis(200)).await;

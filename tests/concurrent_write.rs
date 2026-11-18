@@ -42,7 +42,7 @@ async fn test_continuous_write_consistency() {
     // 1. Create test source and cache
     // The TestSource simulates a remote data store, and Cache provides the local view
     let source = TestSource::new();
-    let mut cache = Cache::<TestConfig>::new(source.clone(), "continuous", "continuous-test").await;
+    let cache = Cache::<TestConfig>::new(source.clone(), "continuous", "continuous-test").await;
 
     // 2. Shared state for background writer coordination
     // These atomic variables allow safe communication between the main test thread

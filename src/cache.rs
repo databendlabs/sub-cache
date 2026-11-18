@@ -19,8 +19,8 @@ use std::sync::Arc;
 use futures::FutureExt;
 use log::debug;
 use tokio::sync::oneshot;
-use tokio::sync::Mutex;
-use tokio::sync::MutexGuard;
+use tokio::sync::RwLock;
+use tokio::sync::RwLockReadGuard;
 
 use crate::cache_data::CacheData;
 use crate::errors::Unsupported;
@@ -35,28 +35,22 @@ use crate::TypeConfig;
 /// ## Features
 ///
 /// - **Automatic Synchronization**: Background watcher task keeps local cache in sync with remote data store
-/// - **Concurrency Control**: Two-level concurrency control mechanism for safe access
+/// - **Concurrency Control**: Readers share the data; reads take `&self`
 /// - **Safe Reconnection**: Automatic recovery from connection failures with state consistency
 /// - **Consistent Initialization**: Ensures cache is fully initialized before use
 ///
 /// ## Concurrency Control
 ///
-/// The cache employs a two-level concurrency control mechanism:
+/// The data is behind a read-write lock. Readers share it; the background watcher holds it
+/// exclusively, briefly to apply each change, and for the whole reset-and-refetch while it
+/// initializes or reconnects.
 ///
-/// 1. **Internal Lock (Mutex)**: Protects concurrent access between user operations and the
-///    background cache updater. This lock is held briefly during each operation.
+/// Every read takes `&self`, so a cache is shared by reference or `Arc` without an outer lock:
 ///
-/// 2. **External Lock (Method Design)**: Public methods require `&mut self` even for read-only
-///    operations. This prevents concurrent access to the cache instance from multiple call sites.
-///    External synchronization should be implemented by the caller if needed.
-///
-/// This design intentionally separates concerns:
-/// - The internal lock handles short-term, fine-grained synchronization with the updater
-/// - The external lock requirement (`&mut self`) enables longer-duration access patterns
-///   without blocking the background updater unnecessarily
-///
-/// Note that despite requiring `&mut self`, all operations are logically read-only
-/// with respect to the cache's public API.
+/// - `try_get`, `try_list_dir`, `try_last_seq` and `try_access` wait while the watcher holds the
+///   data, e.g. until the cache is initialized.
+/// - `try_get_now`, `try_list_dir_now` and `try_access_now` never wait: they return `None` while
+///   the watcher holds the data, and the caller reads the remote data store instead.
 ///
 /// ## Error Handling
 ///
@@ -78,7 +72,7 @@ pub struct Cache<C: TypeConfig> {
     #[allow(dead_code)]
     watcher_cancel_tx: oneshot::Sender<()>,
 
-    data: Arc<Mutex<Result<CacheData<C>, Unsupported>>>,
+    data: Arc<RwLock<Result<CacheData<C>, Unsupported>>>,
 
     /// A process-wide unique identifier for the cache. Used for debugging purposes.
     uniq: u64,
@@ -125,7 +119,7 @@ where C: TypeConfig
         let mut cache = Cache {
             dir,
             watcher_cancel_tx: cancel_tx,
-            data: Arc::new(Mutex::new(Err(Unsupported::new("Cache not initialized")))),
+            data: Arc::new(RwLock::new(Err(Unsupported::new("Cache not initialized")))),
             uniq,
             name: name.to_string(),
         };
@@ -136,14 +130,14 @@ where C: TypeConfig
     }
 
     /// Get a SeqV from the cache by key.
-    pub async fn try_get(&mut self, key: &str) -> Result<Option<C::Value>, Unsupported> {
+    pub async fn try_get(&self, key: &str) -> Result<Option<C::Value>, Unsupported> {
         debug!("Cache::access: try_get({})", key);
         self.try_access(|cache_data| cache_data.data.get(key).cloned())
             .await
     }
 
     /// Get the last sequence number of the cache.
-    pub async fn try_last_seq(&mut self) -> Result<u64, Unsupported> {
+    pub async fn try_last_seq(&self) -> Result<u64, Unsupported> {
         self.try_access(|cache_data| cache_data.last_seq).await
     }
 
@@ -151,41 +145,59 @@ where C: TypeConfig
     ///
     /// `dir` is used as given, as in [`Cache::new`]: `foo/` lists the keys `foo//...` of the
     /// empty-named directory inside `foo`.
-    pub async fn try_list_dir(
-        &mut self,
-        dir: &str,
-    ) -> Result<Vec<(String, C::Value)>, Unsupported> {
-        let left = format!("{}/", dir);
-        let right = format!("{}0", dir);
-
+    pub async fn try_list_dir(&self, dir: &str) -> Result<Vec<(String, C::Value)>, Unsupported> {
         debug!("Cache::access: try_list_dir({})", dir);
-
-        self.try_access(|cache_data| {
-            cache_data
-                .data
-                .range(left..right)
-                .map(|(k, v)| (k.to_string(), v.clone()))
-                .collect()
-        })
-        .await
+        self.try_access(|cache_data| list_dir(cache_data, dir))
+            .await
     }
 
-    /// Get the internal cache data.
-    pub async fn cache_data(&mut self) -> MutexGuard<'_, Result<CacheData<C>, Unsupported>> {
-        self.data.lock().await
+    /// Get the internal cache data, for reading.
+    pub async fn cache_data(&self) -> RwLockReadGuard<'_, Result<CacheData<C>, Unsupported>> {
+        self.data.read().await
     }
 
     /// Access the cache data in read-only mode.
     pub async fn try_access<T>(
-        &mut self,
+        &self,
         f: impl FnOnce(&CacheData<C>) -> T,
     ) -> Result<T, Unsupported> {
-        let guard = self.data.lock().await;
+        let guard = self.data.read().await;
 
         let g = guard.as_ref().map_err(|e| e.clone())?;
 
         let t = f(g);
         Ok(t)
+    }
+
+    /// Run `f` on the cache data if the cache can answer now, without waiting.
+    ///
+    /// `None` while the background watcher holds the data exclusively: while it initializes or
+    /// reconnects, or applies a change. `Some(Err(_))` if the remote data store cannot be
+    /// subscribed. The caller reads the remote data store instead of the cache on `None`.
+    ///
+    /// Readers share the data, so concurrent reads do not push each other away. The read is not
+    /// a future: it answers whether or not the task's tokio coop budget is spent.
+    pub fn try_access_now<T>(
+        &self,
+        f: impl FnOnce(&CacheData<C>) -> T,
+    ) -> Option<Result<T, Unsupported>> {
+        let guard = self.data.try_read().ok()?;
+        Some(guard.as_ref().map(f).map_err(|e| e.clone()))
+    }
+
+    /// The value of `key` if the cache can answer now, see [`Self::try_access_now`].
+    pub fn try_get_now(&self, key: &str) -> Option<Result<Option<C::Value>, Unsupported>> {
+        self.try_access_now(|cache_data| cache_data.data.get(key).cloned())
+    }
+
+    /// The entries under the directory `dir` if the cache can answer now, see
+    /// [`Self::try_access_now`] and [`Self::try_list_dir`].
+    #[allow(clippy::type_complexity)]
+    pub fn try_list_dir_now(
+        &self,
+        dir: &str,
+    ) -> Option<Result<Vec<(String, C::Value)>, Unsupported>> {
+        self.try_access_now(|cache_data| list_dir(cache_data, dir))
     }
 
     /// Spawns a background task to watch to the remote data store key value change events, feed to the cache.
@@ -226,4 +238,15 @@ where C: TypeConfig
 
         (left, right)
     }
+}
+
+/// The entries under the directory `dir`: the keys under `{dir}/`, `dir` used as given.
+fn list_dir<C: TypeConfig>(cache_data: &CacheData<C>, dir: &str) -> Vec<(String, C::Value)> {
+    let left = format!("{}/", dir);
+    let right = format!("{}0", dir);
+    cache_data
+        .data
+        .range(left..right)
+        .map(|(k, v)| (k.to_string(), v.clone()))
+        .collect()
 }

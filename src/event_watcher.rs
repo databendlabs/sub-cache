@@ -24,7 +24,7 @@ use log::error;
 use log::info;
 use log::warn;
 use tokio::sync::oneshot;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 use crate::cache_data::CacheData;
 use crate::errors::ConnectionClosed;
@@ -46,8 +46,8 @@ pub(crate) struct EventWatcher<C: TypeConfig> {
     /// The client to interact with the remote data store.
     pub(crate) source: C::Source,
 
-    /// The shared cache data protected by a mutex.
-    pub(crate) data: Arc<Mutex<Result<CacheData<C>, Unsupported>>>,
+    /// The shared cache data, written by this watcher and read concurrently by the users.
+    pub(crate) data: Arc<RwLock<Result<CacheData<C>, Unsupported>>>,
 
     /// Contains descriptive information of this watcher.
     pub(crate) name: String,
@@ -94,7 +94,7 @@ where C: TypeConfig
             // 1. Retry until a successful connection is established and cache is initialized.
             let strm = {
                 // Hold the lock until the cache is fully initialized.
-                let mut cache_data = self.data.lock().await;
+                let mut cache_data = self.data.write().await;
 
                 // The data lock is acquired and will be kept until the cache is fully initialized.
                 // At this point, we notify the caller that initialization has started by consuming
@@ -274,7 +274,7 @@ where C: TypeConfig
                 }
             };
 
-            let mut cache_data = self.data.lock().await;
+            let mut cache_data = self.data.write().await;
 
             // Safe unwrap: before entering this method, the cache data is ensured to be Ok.
             let d = cache_data.as_mut().unwrap();
@@ -294,7 +294,7 @@ mod tests {
     use std::future::Future;
     use std::sync::Arc;
 
-    use tokio::sync::Mutex;
+    use tokio::sync::RwLock;
 
     use super::*;
     use crate::testing::source::TestSource;
@@ -329,7 +329,7 @@ mod tests {
             left: "start".to_string(),
             right: "end".to_string(),
             source: test_source,
-            data: Arc::new(Mutex::new(Ok(CacheData::default()))),
+            data: Arc::new(RwLock::new(Ok(CacheData::default()))),
             name: "test-watcher".to_string(),
         };
 
@@ -347,7 +347,7 @@ mod tests {
             .insert_for_test("initial_key", Val::new(1, "initial_value"))
             .await;
 
-        let cache = Arc::new(Mutex::new(Ok(CacheData::default())));
+        let cache = Arc::new(RwLock::new(Ok(CacheData::default())));
         let watcher = EventWatcher::<TestConfig> {
             left: "".to_string(),
             right: "z".to_string(),
@@ -374,7 +374,7 @@ mod tests {
 
         // 检查初始数据已同步到本地cache
         {
-            let cache_data = cache.lock().await;
+            let cache_data = cache.read().await;
             let cache_data = cache_data.as_ref().unwrap();
             assert_eq!(
                 cache_data.data.get("initial_key").unwrap(),
@@ -394,7 +394,7 @@ mod tests {
 
         // 检查本地cache内容
         {
-            let cache_data = cache.lock().await;
+            let cache_data = cache.read().await;
             let cache_data = cache_data.as_ref().unwrap();
             assert_eq!(
                 cache_data.data.get("key1").unwrap(),
@@ -446,7 +446,7 @@ mod tests {
             left: "".to_string(),
             right: "z".to_string(),
             source: TestSource::new(),
-            data: Arc::new(Mutex::new(Ok(CacheData::default()))),
+            data: Arc::new(RwLock::new(Ok(CacheData::default()))),
             name: "test-init-cache".to_string(),
         };
 
@@ -488,7 +488,7 @@ mod tests {
             left: "".to_string(),
             right: "z".to_string(),
             source: TestSource::new(),
-            data: Arc::new(Mutex::new(Ok(CacheData::default()))),
+            data: Arc::new(RwLock::new(Ok(CacheData::default()))),
             name: "test-init-cache-error".to_string(),
         };
 
@@ -523,7 +523,7 @@ mod tests {
         ];
         let stream = stream::iter(events);
 
-        let cache = Arc::new(Mutex::new(Ok(CacheData::default())));
+        let cache = Arc::new(RwLock::new(Ok(CacheData::default())));
         let mut watcher = EventWatcher::<TestConfig> {
             left: "".to_string(),
             right: "z".to_string(),
@@ -544,7 +544,7 @@ mod tests {
         assert!(res.is_err());
 
         // 检查cache内容
-        let cache_data = cache.lock().await;
+        let cache_data = cache.read().await;
         let cache_data = cache_data.as_ref().unwrap();
         assert_eq!(cache_data.data.get("k1"), Some(&Val::new(1, "v1")));
         assert_eq!(cache_data.data.get("k2"), Some(&Val::new(2, "v2")));
@@ -560,7 +560,7 @@ mod tests {
         // 构造一个永不结束的流
         let stream = stream::pending();
 
-        let cache = Arc::new(Mutex::new(Ok(CacheData::default())));
+        let cache = Arc::new(RwLock::new(Ok(CacheData::default())));
         let mut watcher = EventWatcher::<TestConfig> {
             left: "".to_string(),
             right: "z".to_string(),
@@ -581,7 +581,7 @@ mod tests {
         assert!(res.is_ok());
 
         // 检查cache内容应为空
-        let cache_data = cache.lock().await;
+        let cache_data = cache.read().await;
         let cache_data = cache_data.as_ref().unwrap();
         assert!(cache_data.data.is_empty());
         assert_eq!(cache_data.last_seq, 0);
@@ -611,7 +611,7 @@ mod tests {
         ];
         let stream = stream::iter(events);
 
-        let cache = Arc::new(Mutex::new(Ok(CacheData::default())));
+        let cache = Arc::new(RwLock::new(Ok(CacheData::default())));
         let mut watcher = EventWatcher::<TestConfig> {
             left: "".to_string(),
             right: "z".to_string(),
@@ -630,7 +630,7 @@ mod tests {
         assert!(err.to_string().contains("test error"));
 
         // 检查cache内容只包含第一个事件
-        let cache_data = cache.lock().await;
+        let cache_data = cache.read().await;
         let cache_data = cache_data.as_ref().unwrap();
         assert_eq!(cache_data.data.get("k1"), Some(&Val::new(1, "v1")));
         assert!(!cache_data.data.contains_key("k2"));
@@ -660,7 +660,7 @@ mod tests {
         ];
         let stream = stream::iter(events);
 
-        let cache = Arc::new(Mutex::new(Ok(CacheData::default())));
+        let cache = Arc::new(RwLock::new(Ok(CacheData::default())));
         let mut watcher = EventWatcher::<TestConfig> {
             left: "".to_string(),
             right: "z".to_string(),
@@ -676,7 +676,7 @@ mod tests {
         let _ = watcher.watch_kv_changes(stream, cancel).await;
 
         // 检查panic前cache内容（只处理第一个Change）
-        let cache_data = cache.lock().await;
+        let cache_data = cache.read().await;
         let cache_data = cache_data.as_ref().unwrap();
         assert_eq!(cache_data.data.get("k1"), Some(&Val::new(1, "v1")));
         assert!(!cache_data.data.contains_key("k2"));
@@ -710,7 +710,7 @@ mod tests {
         ];
         let stream = stream::iter(events);
 
-        let cache = Arc::new(Mutex::new(Ok(CacheData::default())));
+        let cache = Arc::new(RwLock::new(Ok(CacheData::default())));
         let mut watcher = EventWatcher::<TestConfig> {
             left: "".to_string(),
             right: "z".to_string(),
@@ -725,7 +725,7 @@ mod tests {
         };
         let _ = watcher.watch_kv_changes(stream, cancel).await;
 
-        let cache_data = cache.lock().await;
+        let cache_data = cache.read().await;
         let cache_data = cache_data.as_ref().unwrap();
         // last_seq应为最大值5，内容为最后一次变更
         assert_eq!(cache_data.last_seq, 5);
