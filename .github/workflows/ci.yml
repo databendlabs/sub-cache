@@ -108,7 +108,9 @@ jobs:
 
 
       - shell: bash
-        run: cargo install cargo-audit
+        # `--locked`: the latest dependencies of cargo-audit can need a newer rustc than the one
+        # pinned by `rust-toolchain.toml`.
+        run: cargo install cargo-audit --locked
 
 
       - name: Audit dependencies
