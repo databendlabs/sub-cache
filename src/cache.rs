@@ -42,8 +42,8 @@ use crate::TypeConfig;
 /// ## Concurrency Control
 ///
 /// The data is behind a read-write lock. Readers share it; the background watcher holds it
-/// exclusively, briefly to apply each change, and for the whole reset-and-refetch while it
-/// initializes or reconnects.
+/// exclusively, briefly to apply each change, and for the whole re-fetch while it initializes
+/// or reconnects.
 ///
 /// Every read takes `&self`, so a cache is shared by reference or `Arc` without an outer lock:
 ///
@@ -55,9 +55,10 @@ use crate::TypeConfig;
 /// ## Error Handling
 ///
 /// - Background watcher task automatically recovers from errors by:
-///   - Resetting the cache state
 ///   - Re-establishing the watch stream
 ///   - Re-fetching all data to ensure consistency
+///   - Replacing the cache data only with a complete initial flush: a flush that fails part
+///     way is never served
 /// - Users are shielded from transient errors through the abstraction
 pub struct Cache<C: TypeConfig> {
     /// The cached directory, used as given: the cache holds the keys under `{dir}/`.

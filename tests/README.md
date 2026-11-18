@@ -31,6 +31,9 @@
 #### `recovery.rs` - 连接恢复测试
 验证连接失败后的自动恢复能力。模拟网络中断，验证自动重连和状态恢复。
 
+#### `failed_initial_flush.rs` - 初始数据中断测试
+验证初始数据（initial flush）中途断开时，读者读不到其中一部分：首次初始化时得到错误，重连时得到重连前的完整数据。
+
 #### `unsupported_subscribe.rs` - 不支持订阅测试
 验证数据源不支持订阅时的优雅降级。返回 `SubscribeError::Unsupported` 错误。
 

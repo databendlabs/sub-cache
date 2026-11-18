@@ -61,7 +61,7 @@ if let Some(value) = cache.try_get_now("key") {
 
 ## Concurrency Control
 
-The data is behind a read-write lock. Readers share it; the background watcher holds it exclusively, briefly to apply each change, and for the whole reset-and-refetch while it initializes or reconnects.
+The data is behind a read-write lock. Readers share it; the background watcher holds it exclusively, briefly to apply each change, and for the whole re-fetch while it initializes or reconnects.
 
 Every read takes `&self`, so a cache is shared by reference or `Arc` without an outer lock:
 
@@ -87,6 +87,7 @@ The cache implements robust error handling:
 
 - Connection failures are automatically retried in the background
 - Background watcher task automatically recovers from errors
+- The cached data is replaced only by a complete initial flush: a flush that fails part way is never served
 - Users are shielded from transient errors through the abstraction
 - The cache ensures data consistency by tracking sequence numbers
 
