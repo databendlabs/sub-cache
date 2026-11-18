@@ -66,10 +66,10 @@ use crate::TypeConfig;
 ///   - Re-fetching all data to ensure consistency
 /// - Users are shielded from transient errors through the abstraction
 pub struct Cache<C: TypeConfig> {
-    /// The dir path to store the cache ids, without trailing slash.
+    /// The cached directory, used as given: the cache holds the keys under `{dir}/`.
     ///
-    /// Such as `foo`, not `foo/`
-    prefix: String,
+    /// `foo` is the directory `foo`, and `foo/` the empty-named directory inside it.
+    dir: String,
 
     /// The sender to cancel the background watcher task.
     ///
@@ -91,11 +91,7 @@ impl<C> fmt::Display for Cache<C>
 where C: TypeConfig
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Cache({})({}/)[uniq={}]",
-            self.name, self.prefix, self.uniq
-        )
+        write!(f, "Cache({})({}/)[uniq={}]", self.name, self.dir, self.uniq)
     }
 }
 
@@ -111,14 +107,15 @@ where C: TypeConfig
     /// # Parameters
     ///
     /// * `source` - The client to interact with the remote data store.
-    /// * `prefix` - The prefix of the cache name and also the directory name to store in remote data store.
-    /// * `ctx` - The context info of the cache, used for debugging purposes.
+    /// * `dir` - The directory to cache, used as given: the cache holds the keys under `{dir}/`.
+    ///   `foo` is the directory `foo`, and `foo/` the empty-named directory inside it, whose keys
+    ///   are `foo//...`. A trailing `/` is never stripped.
+    /// * `name` - The name of the cache, used for debugging purposes.
     ///
     /// This method spawns a background task to watch to the remote data store key value change events.
     /// The task will be notified to quit when this instance is dropped.
-    pub async fn new(source: C::Source, prefix: impl ToString, name: impl ToString) -> Self {
-        let prefix = prefix.to_string();
-        let prefix = prefix.trim_end_matches('/').to_string();
+    pub async fn new(source: C::Source, dir: impl ToString, name: impl ToString) -> Self {
+        let dir = dir.to_string();
 
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
 
@@ -126,7 +123,7 @@ where C: TypeConfig
         let uniq = UNIQ.fetch_add(1, atomic::Ordering::SeqCst);
 
         let mut cache = Cache {
-            prefix,
+            dir,
             watcher_cancel_tx: cancel_tx,
             data: Arc::new(Mutex::new(Err(Unsupported::new("Cache not initialized")))),
             uniq,
@@ -150,16 +147,18 @@ where C: TypeConfig
         self.try_access(|cache_data| cache_data.last_seq).await
     }
 
-    /// List all entries in the cache directory.
+    /// List the entries under the directory `dir`, the keys under `{dir}/`.
+    ///
+    /// `dir` is used as given, as in [`Cache::new`]: `foo/` lists the keys `foo//...` of the
+    /// empty-named directory inside `foo`.
     pub async fn try_list_dir(
         &mut self,
-        prefix: &str,
+        dir: &str,
     ) -> Result<Vec<(String, C::Value)>, Unsupported> {
-        let prefix = prefix.trim_end_matches('/');
-        let left = format!("{}/", prefix);
-        let right = format!("{}0", prefix);
+        let left = format!("{}/", dir);
+        let right = format!("{}0", dir);
 
-        debug!("Cache::access: try_list_dir({})", prefix);
+        debug!("Cache::access: try_list_dir({})", dir);
 
         self.try_access(|cache_data| {
             cache_data
@@ -220,10 +219,10 @@ where C: TypeConfig
     /// The left-close right-open range for the cached keys.
     ///
     /// Since `'0'` is the next char of `'/'`.
-    /// `[prefix + "/", prefix + "0")` is the range of the cache ids.
+    /// `[dir + "/", dir + "0")` is the range of the cache ids.
     fn key_range(&self) -> (String, String) {
-        let left = self.prefix.clone() + "/";
-        let right = self.prefix.clone() + "0";
+        let left = self.dir.clone() + "/";
+        let right = self.dir.clone() + "0";
 
         (left, right)
     }

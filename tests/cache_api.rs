@@ -310,3 +310,38 @@ async fn test_cache_api_error_handling() {
 
     println!("Cache API error handling test completed successfully!");
 }
+
+/// A directory is used as given, and never loses a trailing `/`: `dirs/` is the empty-named
+/// directory inside `dirs`, whose keys are `dirs//...`.
+#[tokio::test]
+async fn test_cache_dir_is_used_as_given() {
+    let source = TestSource::new();
+    source.set("dirs/a", Some("a")).await;
+    source.set("dirs//b", Some("b")).await;
+    source.set("dirs///c", Some("c")).await;
+
+    fn keys(entries: Vec<(String, sub_cache::testing::source::Val)>) -> Vec<String> {
+        entries.into_iter().map(|(k, _)| k).collect()
+    }
+
+    let mut cache = Cache::<TestConfig>::new(source.clone(), "dirs", "dirs").await;
+    sleep(Duration::from_millis(100)).await;
+    assert_eq!(keys(cache.try_list_dir("dirs").await.unwrap()), vec![
+        "dirs///c", "dirs//b", "dirs/a"
+    ]);
+    assert_eq!(keys(cache.try_list_dir("dirs/").await.unwrap()), vec![
+        "dirs///c", "dirs//b"
+    ]);
+    assert_eq!(keys(cache.try_list_dir("dirs//").await.unwrap()), vec![
+        "dirs///c"
+    ]);
+
+    // A cache of the empty-named directory holds its keys only.
+    let mut empty_named = Cache::<TestConfig>::new(source.clone(), "dirs/", "dirs-empty").await;
+    sleep(Duration::from_millis(100)).await;
+    assert_eq!(empty_named.try_get("dirs/a").await.unwrap(), None);
+    assert_eq!(
+        keys(empty_named.try_list_dir("dirs/").await.unwrap()),
+        vec!["dirs///c", "dirs//b"]
+    );
+}

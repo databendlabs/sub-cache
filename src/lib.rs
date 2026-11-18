@@ -27,17 +27,19 @@
 //! # Cache Key Structure
 //!
 //! ```text
-//! <prefix>/foo
-//! <prefix>/..
-//! <prefix>/..
+//! <dir>/foo
+//! <dir>/..
+//! <dir>/..
 //! ```
 //!
-//! - `<prefix>` is a user-defined string to identify a cache instance.
+//! - `<dir>` is the cached directory, used as given: the cache holds the keys under `<dir>/`.
+//!   `foo/` is the empty-named directory inside `foo`, whose keys are `foo//...`. The directory
+//!   also identifies a cache instance.
 //!
 //! # Initialization Process
 //!
 //! When a [`Cache`] is created, it:
-//! 1. Creates a new instance with the specified prefix
+//! 1. Creates a new instance of the specified directory
 //! 2. Spawns a background task to watch for changes
 //! 3. Establishes a watch stream with initial flush
 //! 4. Fetches and processes initial data
@@ -65,14 +67,14 @@
 //! |       |   cancel               |                                          |
 //! |       |                        |                                          |
 //! |       |   In memory BTree      |                                          |
-//! |       +-+ <prefix>/foo    <--+ |                                          |
-//! |         | <prefix>/...    <--+-+                                          |
-//! |         | <prefix>/...    <--+ |                                          |
+//! |       +-+ <dir>/foo       <--+ |                                          |
+//! |         | <dir>/...       <--+-+                                          |
+//! |         | <dir>/...       <--+ |                                          |
 //! |         |                      |                                          |
 //! |         + last_seq: u64   <----'                    Remote Data Store     |
-//! |                                                     <prefix>/foo     --+  |
-//! |                                                 .-> <prefix>/...     --+--'
-//! |                                                 |   <prefix>/...     --'
+//! |                                                     <dir>/foo        --+  |
+//! |                                                 .-> <dir>/...        --+--'
+//! |                                                 |   <dir>/...        --'
 //! |                                                 |
 //! |                                ... -------------'
 //! |                                    Update by other threads

@@ -14,12 +14,14 @@ A distributed cache implementation providing reliable resource management and da
 ### Cache Structure
 
 ```text
-<prefix>/foo
-<prefix>/..
-<prefix>/..
+<dir>/foo
+<dir>/..
+<dir>/..
 ```
 
-- `<prefix>`: User-defined string to identify a cache instance
+- `<dir>`: The cached directory, used as given: the cache holds the keys under `<dir>/`, and
+  `foo/` is the empty-named directory inside `foo`, whose keys are `foo//...`. It also
+  identifies a cache instance
 
 ### Main Types
 
@@ -48,8 +50,8 @@ cache.try_access(|c: &CacheData| {
 // Get a specific value
 let value = cache.try_get("key").await?;
 
-// List all entries under a prefix
-let entries = cache.try_list_dir("prefix").await?;
+// List all entries under a directory
+let entries = cache.try_list_dir("dir").await?;
 ```
 
 ## Concurrency Control
@@ -70,7 +72,7 @@ Note that despite requiring `&mut self`, all operations are logically read-only 
 
 When a `Cache` is created, it goes through the following steps:
 
-1. Creates a new instance with specified prefix and context
+1. Creates a new instance of the specified directory and name
 2. Spawns a background task to watch for key-value changes
 3. Establishes a watch stream to the remote data store
 4. Fetches and processes initial data
